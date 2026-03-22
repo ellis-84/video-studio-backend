@@ -8,6 +8,7 @@ const path = require('path');
 app.use(express.static(path.join(__dirname, 'public')));
 
 const FAL_BASE = 'https://queue.fal.run/fal-ai/kling-video/v1.6/standard';
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 // Submit job and return request_id immediately
 app.post('/api/submit-video', async (req, res) => {
