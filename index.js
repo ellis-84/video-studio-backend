@@ -32,18 +32,21 @@ app.post('/api/check-video', async (req, res) => {
   if (!request_id || !falApiKey) return res.status(400).json({ error: 'Missing fields' });
   try {
     const status = await fetch(`${FAL_BASE}/requests/${request_id}/status`, {
-      headers: { 'Authorization': `Key ${falApiKey}` }
+      headers: { 'Authorization': `Key ${falApiKey}`, 'Content-Type': 'application/json' }
     });
-    const statusData = await status.json();
+    const statusText = await status.text();
+    let statusData;
+    try { statusData = JSON.parse(statusText); } 
+    catch(e) { return res.status(500).json({ error: 'Bad response: ' + statusText }); }
     if (statusData.status === 'COMPLETED') {
       const result = await fetch(`${FAL_BASE}/requests/${request_id}`, {
-        headers: { 'Authorization': `Key ${falApiKey}` }
+        headers: { 'Authorization': `Key ${falApiKey}`, 'Content-Type': 'application/json' }
       });
       const resultData = await result.json();
       const videoUrl = resultData?.video?.url || resultData?.videos?.[0]?.url;
       return res.json({ status: 'COMPLETED', videoUrl });
     }
-    return res.json({ status: statusData.status });
+    return res.json({ status: statusData.status || 'UNKNOWN' });
   } catch(e) {
     return res.status(500).json({ error: e.message });
   }
