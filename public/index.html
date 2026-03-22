@@ -354,8 +354,16 @@ async function pollVideo(request_id,falKey,onStatus) {
 }
 
 async function generateVideo(prompt,falKey,onStatus) {
-  const rid=await submitVideo(prompt,falKey);
-  return await pollVideo(rid,falKey,onStatus);
+  if(onStatus) onStatus('Generating...',0);
+  const res=await fetch(`${BACKEND}/api/generate-video`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({prompt,falApiKey:falKey})
+  });
+  if(!res.ok) throw new Error(`Server error: ${res.status}`);
+  const data=await res.json();
+  if(!data.videoUrl) throw new Error(data.error||'No video URL');
+  return data.videoUrl;
 }
 
 async function runTestVideo() {
