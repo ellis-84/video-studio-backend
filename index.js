@@ -19,7 +19,9 @@ app.post('/api/generate-video', async (req, res) => {
       headers: { 'Authorization': `Key ${falApiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, duration: "5", aspect_ratio: "9:16", negative_prompt: "horizontal, landscape, wide, blur, distort, low quality" })
     });
-    const { request_id } = await submit.json();
+    const submitData = await submit.json();
+console.log('fal.ai submit response:', JSON.stringify(submitData));
+const request_id = submitData.request_id;
     if (!request_id) return res.status(500).json({ error: 'No request ID' });
 
     // Poll
