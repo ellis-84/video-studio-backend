@@ -4,6 +4,8 @@ const cors = require('cors');
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST'], allowedHeaders: ['Content-Type'] }));
 app.use(express.json());
+const path = require('path');
+app.use(express.static(path.join(__dirname, 'public')));
 
 const FAL_BASE = 'https://queue.fal.run/fal-ai/kling-video/v1.6/standard';
 
