@@ -30,3 +30,7 @@ app.post('/api/generate-video', async (req, res) => {
         headers: { 'Authorization': `Key ${falApiKey}` }
       });
       const statusData = await statusRes.json
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
