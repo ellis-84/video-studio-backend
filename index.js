@@ -8,7 +8,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const FAL_SUBMIT = 'https://queue.fal.run/fal-ai/kling-video/v1.6/standard/text-to-video';
-const FAL_QUEUE  = 'https://queue.fal.run/fal-ai/kling-video';
+const FAL_QUEUE = 'https://queue.fal.run/fal-ai/kling-video';
 
 app.post('/api/generate-video', async (req, res) => {
   const { prompt, falApiKey } = req.body;
@@ -29,7 +29,26 @@ app.post('/api/generate-video', async (req, res) => {
       const statusRes = await fetch(`${FAL_QUEUE}/requests/${request_id}/status`, {
         headers: { 'Authorization': `Key ${falApiKey}` }
       });
-      const statusData = await statusRes.json
+      const statusData = await statusRes.json();
+      console.log('status:', statusData.status);
+      if (statusData.status === 'COMPLETED') {
+        const resultRes = await fetch(`${FAL_QUEUE}/requests/${request_id}`, {
+          headers: { 'Authorization': `Key ${falApiKey}` }
+        });
+        const data = await resultRes.json();
+        console.log('result:', JSON.stringify(data));
+        const videoUrl = data?.video?.url || data?.videos?.[0]?.url;
+        return res.json({ videoUrl });
+      }
+      if (statusData.status === 'FAILED') return res.status(500).json({ error: 'Generation failed' });
+    }
+    return res.status(504).json({ error: 'Timed out' });
+  } catch(e) {
+    console.log('error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 8080;
