@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
+const { execSync } = require('child_process');
 
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST'], allowedHeaders: ['Content-Type'] }));
@@ -10,39 +12,107 @@ app.use(express.static(path.join(__dirname, 'public')));
 const FAL_SUBMIT = 'https://queue.fal.run/fal-ai/kling-video/v1.6/standard/text-to-video';
 const FAL_QUEUE = 'https://queue.fal.run/fal-ai/kling-video';
 
-app.post('/api/generate-video', async (req, res) => {
-  const { prompt, falApiKey } = req.body;
-  if (!prompt || !falApiKey) return res.status(400).json({ error: 'Missing fields' });
-  try {
-    const submit = await fetch(FAL_SUBMIT, {
-      method: 'POST',
-      headers: { 'Authorization': `Key ${falApiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, duration: "5", aspect_ratio: "9:16", negative_prompt: "horizontal, landscape, wide, blur, distort, low quality" })
-    });
-    const submitData = await submit.json();
-    console.log('submit:', JSON.stringify(submitData));
-    const request_id = submitData.request_id;
-    if (!request_id) return res.status(500).json({ error: 'No request ID', raw: submitData });
+async function generateVoiceover(text, elevenKey, voiceId) {
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: 'POST',
+    headers: {
+      'xi-api-key': elevenKey,
+      'Content-Type': 'application/json',
+      'Accept': 'audio/mpeg'
+    },
+    body: JSON.stringify({
+      text,
+      model_id: 'eleven_monolingual_v1',
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+    })
+  });
+  if (!res.ok) throw new Error(`ElevenLabs error: ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const audioPath = `/tmp/audio_${Date.now()}.mp3`;
+  fs.writeFileSync(audioPath, buffer);
+  const duration = parseFloat(
+    execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`).toString().trim()
+  );
+  return { audioPath, duration };
+}
 
-    for (let i = 0; i < 60; i++) {
-      await new Promise(r => setTimeout(r, 8000));
-      const statusRes = await fetch(`${FAL_QUEUE}/requests/${request_id}/status`, {
+async function generateKlingVideo(prompt, falApiKey, durationSeconds) {
+  const dur = Math.min(10, Math.max(5, Math.ceil(durationSeconds))).toString();
+  const submit = await fetch(FAL_SUBMIT, {
+    method: 'POST',
+    headers: { 'Authorization': `Key ${falApiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      duration: dur,
+      aspect_ratio: "9:16",
+      negative_prompt: "horizontal, landscape, wide, blur, distort, low quality"
+    })
+  });
+  const submitData = await submit.json();
+  console.log('submit:', JSON.stringify(submitData));
+  const request_id = submitData.request_id;
+  if (!request_id) throw new Error('No request ID from fal.ai');
+
+  for (let i = 0; i < 60; i++) {
+    await new Promise(r => setTimeout(r, 8000));
+    const statusRes = await fetch(`${FAL_QUEUE}/requests/${request_id}/status`, {
+      headers: { 'Authorization': `Key ${falApiKey}` }
+    });
+    const statusData = await statusRes.json();
+    console.log('status:', statusData.status);
+    if (statusData.status === 'COMPLETED') {
+      const resultRes = await fetch(`${FAL_QUEUE}/requests/${request_id}`, {
         headers: { 'Authorization': `Key ${falApiKey}` }
       });
-      const statusData = await statusRes.json();
-      console.log('status:', statusData.status);
-      if (statusData.status === 'COMPLETED') {
-        const resultRes = await fetch(`${FAL_QUEUE}/requests/${request_id}`, {
-          headers: { 'Authorization': `Key ${falApiKey}` }
-        });
-        const data = await resultRes.json();
-        console.log('result:', JSON.stringify(data));
-        const videoUrl = data?.video?.url || data?.videos?.[0]?.url;
-        return res.json({ videoUrl });
-      }
-      if (statusData.status === 'FAILED') return res.status(500).json({ error: 'Generation failed' });
+      const data = await resultRes.json();
+      const videoUrl = data?.video?.url || data?.videos?.[0]?.url;
+      if (!videoUrl) throw new Error('No video URL in result');
+      return videoUrl;
     }
-    return res.status(504).json({ error: 'Timed out' });
+    if (statusData.status === 'FAILED') throw new Error('Kling generation failed');
+  }
+  throw new Error('Timed out waiting for video');
+}
+
+async function mergeAudioVideo(videoUrl, audioPath) {
+  const videoPath = `/tmp/video_${Date.now()}.mp4`;
+  const outputPath = `/tmp/output_${Date.now()}.mp4`;
+  const videoRes = await fetch(videoUrl);
+  const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+  fs.writeFileSync(videoPath, videoBuffer);
+  execSync(`ffmpeg -i "${videoPath}" -i "${audioPath}" -map 0:v -map 1:a -c:v copy -c:a aac -shortest "${outputPath}" -y`);
+  const outputBuffer = fs.readFileSync(outputPath);
+  try { fs.unlinkSync(videoPath); fs.unlinkSync(audioPath); fs.unlinkSync(outputPath); } catch(e) {}
+  return outputBuffer;
+}
+
+app.post('/api/generate-video', async (req, res) => {
+  const { prompt, question, falApiKey, elevenKey, voiceId } = req.body;
+  if (!prompt || !falApiKey) return res.status(400).json({ error: 'Missing fields' });
+  try {
+    let audioPath = null;
+    let duration = 5;
+
+    if (elevenKey && voiceId && question) {
+      console.log('Generating voiceover...');
+      const voiceover = await generateVoiceover(question, elevenKey, voiceId);
+      audioPath = voiceover.audioPath;
+      duration = voiceover.duration;
+      console.log(`Voiceover duration: ${duration}s`);
+    }
+
+    console.log(`Generating video at ${duration}s...`);
+    const videoUrl = await generateKlingVideo(prompt, falApiKey, duration);
+
+    if (audioPath) {
+      console.log('Merging audio and video...');
+      const mergedBuffer = await mergeAudioVideo(videoUrl, audioPath);
+      res.set('Content-Type', 'video/mp4');
+      res.set('Content-Disposition', 'attachment; filename="video.mp4"');
+      return res.send(mergedBuffer);
+    }
+
+    return res.json({ videoUrl });
   } catch(e) {
     console.log('error:', e.message);
     return res.status(500).json({ error: e.message });
