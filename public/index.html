@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -13,7 +12,7 @@
     --text: #1a1a1a; --text2: #6b6b67; --text3: #9b9b97;
     --border: rgba(0,0,0,0.1); --border2: rgba(0,0,0,0.2);
     --accent: #1a1a1a; --accent-fg: #ffffff;
-    --success: #16a34a; --danger: #dc2626; --info: #2563eb;
+    --success: #16a34a; --danger: #dc2626;
     --radius: 8px; --radius-lg: 12px;
   }
   body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -137,7 +136,7 @@
     <div id="videoGrid" class="video-grid"></div>
     <div id="emptyState" class="empty-state">
       <span class="empty-icon">🎬</span>
-      Add your fal.ai key in Settings, then click Generate
+      Add your API keys in Settings, then click Generate
     </div>
     <button class="dl-all-btn" id="dlAllBtn" onclick="downloadAll()">Download all videos</button>
   </div>
@@ -192,7 +191,7 @@
     </div>
     <div class="section">
       <div class="section-label">Test connection</div>
-      <p style="font-size:13px;color:#6b6b67;margin-bottom:10px;">Generates one real beach walk video to confirm everything is working.</p>
+      <p style="font-size:13px;color:#6b6b67;margin-bottom:10px;">Generates one real beach walk video with voiceover to confirm everything is working.</p>
       <button class="btn-primary" id="testBtn" onclick="runTestVideo()" style="width:100%">Generate test video ↗</button>
       <div class="test-result" id="testResult"></div>
     </div>
@@ -207,7 +206,6 @@
     <div class="info-box">Keys are stored in your browser only and never logged by the server.</div>
   </div>
 </div>
-
 <script>
 const BACKEND = 'https://video-studio-backend-production.up.railway.app';
 
@@ -317,7 +315,7 @@ function selectVoice(el,v) {
 }
 
 function getScene(style) {
-  if(style==='random'){const k=Object.keys(SCENES);return SCENES[k[Math.floor(Math.random()*k.length)]];}
+  if(style==='random'){const k=Object.keys(SCENES);return SCENES[k[Math.floor(Math.random()*k.length)]];} 
   return SCENES[style]||SCENES.beach;
 }
 
@@ -327,62 +325,52 @@ function getRandomQuestions(count) {
   return Array.from({length:count},()=>pool[Math.floor(Math.random()*pool.length)]);
 }
 
-async function submitVideo(prompt,falKey) {
-  const res=await fetch(`${BACKEND}/api/submit-video`,{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({prompt,falApiKey:falKey})
-  });
-  if(!res.ok) throw new Error(`Submit error: ${res.status}`);
-  const data=await res.json();
-  if(!data.request_id) throw new Error('No request ID returned');
-  return data.request_id;
+function getKeys() {
+  return {
+    falApiKey: document.getElementById('key-fal').value.trim(),
+    elevenKey: document.getElementById('key-eleven').value.trim(),
+    voiceId: document.getElementById('key-voice').value.trim(),
+  };
 }
 
-async function pollVideo(request_id,falKey,onStatus) {
-  for(let i=0;i<120;i++) {
-    await new Promise(r=>setTimeout(r,10000));
-    const res=await fetch(`${BACKEND}/api/check-video`,{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({request_id,falApiKey:falKey})
-    });
-    const data=await res.json();
-    if(onStatus) onStatus(data.status,i);
-    if(data.status==='COMPLETED') return data.videoUrl;
-    if(data.status==='FAILED') throw new Error('Generation failed');
+async function callGenerateVideo(prompt, question) {
+  const { falApiKey, elevenKey, voiceId } = getKeys();
+  const body = { prompt, falApiKey };
+  if (elevenKey && voiceId && question) {
+    body.question = question;
+    body.elevenKey = elevenKey;
+    body.voiceId = voiceId;
   }
-  throw new Error('Timed out');
-}
-
-async function generateVideo(prompt,falKey,onStatus) {
-  if(onStatus) onStatus('Generating...',0);
-  const res=await fetch(`${BACKEND}/api/generate-video`,{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({prompt,falApiKey:falKey})
+  const res = await fetch(`${BACKEND}/api/generate-video`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
   });
-  if(!res.ok) throw new Error(`Server error: ${res.status}`);
-  const data=await res.json();
-  if(!data.videoUrl) throw new Error(data.error||'No video URL');
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || `Server error: ${res.status}`);
+  }
+  const contentType = res.headers.get('content-type');
+  if (contentType && contentType.includes('video')) {
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  }
+  const data = await res.json();
   return data.videoUrl;
 }
 
 async function runTestVideo() {
-  const falKey=document.getElementById('key-fal').value.trim();
-  if(!falKey){alert('Enter your fal.ai API key first.');return;}
+  const { falApiKey } = getKeys();
+  if(!falApiKey){alert('Enter your fal.ai API key first.');return;}
   const btn=document.getElementById('testBtn');
   const result=document.getElementById('testResult');
   btn.disabled=true; btn.textContent='Generating...';
   result.style.display='block';
-  result.innerHTML='⏳ Submitted to fal.ai — polling every 5 seconds...';
+  result.innerHTML='⏳ Generating video with voiceover... this takes 3-5 minutes.';
   try {
-    const videoUrl=await generateVideo(SCENES.beach,falKey,(status,attempt)=>{
-      result.innerHTML=`⏳ Status: ${status} (check ${attempt+1}/60)...`;
-    });
-    if(videoUrl) {
-      result.innerHTML=`✅ It works! Here's your first real video:<br/><video controls src="${videoUrl}" style="width:100%;margin-top:8px;border-radius:8px;max-height:400px;"></video>`;
-    } else {
-      result.innerHTML='❌ No video URL returned.';
-    }
+    const testQuestion = "Would you rather have $1 million at age 20, or $3 million at age 30?";
+    const videoUrl = await callGenerateVideo(SCENES.beach, testQuestion);
+    result.innerHTML=`✅ Success! Here's your video with voiceover:<br/><video controls src="${videoUrl}" style="width:100%;margin-top:8px;border-radius:8px;max-height:500px;"></video>`;
   } catch(e) {
     result.innerHTML='❌ Error: '+e.message;
   }
@@ -390,8 +378,8 @@ async function runTestVideo() {
 }
 
 async function startGeneration() {
-  const falKey=document.getElementById('key-fal').value.trim();
-  if(!falKey){alert('Enter your fal.ai API key in Settings first.');switchTab('settings');return;}
+  const { falApiKey } = getKeys();
+  if(!falApiKey){alert('Enter your fal.ai API key in Settings first.');switchTab('settings');return;}
   const btn=document.getElementById('genBtn');
   const count=parseInt(document.getElementById('videoCount').value);
   const style=document.getElementById('videoStyle').value;
@@ -424,7 +412,7 @@ async function startGeneration() {
   for(let i=0;i<count;i++) {
     document.getElementById('progressFill').style.width=Math.round((i/count)*100)+'%';
     document.getElementById('progressLabel').textContent=`Generating video ${i+1} of ${count}...`;
-    await generateSingleVideo(i,questions[i],style,falKey);
+    await generateSingleVideo(i,questions[i],style);
   }
   document.getElementById('progressFill').style.width='100%';
   document.getElementById('progressLabel').textContent=`All ${count} videos ready!`;
@@ -432,15 +420,13 @@ async function startGeneration() {
   document.getElementById('dlAllBtn').style.display='block';
 }
 
-async function generateSingleVideo(index,question,style,falKey) {
+async function generateSingleVideo(index,question,style) {
   const thumb=document.getElementById('thumb-'+index);
   const statusEl=document.getElementById('status-'+index);
   try {
     const prompt=getScene(style);
-    if(statusEl) statusEl.textContent='Submitting...';
-    const videoUrl=await generateVideo(prompt,falKey,(status)=>{
-      if(statusEl) statusEl.textContent=status+'...';
-    });
+    if(statusEl) statusEl.textContent='Generating...';
+    const videoUrl = await callGenerateVideo(prompt, question);
     thumb.classList.remove('generating');
     if(videoUrl) {
       thumb.innerHTML=`<video src="${videoUrl}" autoplay muted loop playsinline></video><div class="video-caption">${question.length>80?question.slice(0,80)+'…':question}</div>`;
@@ -457,14 +443,14 @@ async function generateSingleVideo(index,question,style,falKey) {
 }
 
 async function regenVideo(i) {
-  const falKey=document.getElementById('key-fal').value.trim();
-  if(!falKey){alert('Enter your fal.ai API key in Settings.');return;}
+  const { falApiKey } = getKeys();
+  if(!falApiKey){alert('Enter your fal.ai API key in Settings.');return;}
   document.getElementById('dl-'+i).disabled=true;
   document.getElementById('regen-'+i).disabled=true;
   const thumb=document.getElementById('thumb-'+i);
   thumb.className='video-thumb generating';
   thumb.innerHTML=`<div class="thumb-icon">⏳</div><div class="thumb-status" id="status-${i}">Regenerating...</div>`;
-  await generateSingleVideo(i,videoData[i].question,videoData[i].style,falKey);
+  await generateSingleVideo(i,videoData[i].question,videoData[i].style);
 }
 
 function downloadVideo(i) {
