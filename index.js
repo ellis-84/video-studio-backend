@@ -12,7 +12,7 @@ ffmpeg.setFfprobePath(ffprobeStatic.path);
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST'], allowedHeaders: ['Content-Type'] }));
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+
 
 const FAL_SUBMIT = 'https://queue.fal.run/fal-ai/kling-video/v1.6/standard/text-to-video';
 const FAL_QUEUE = 'https://queue.fal.run/fal-ai/kling-video';
@@ -147,4 +147,5 @@ app.post('/api/generate-video', async (req, res) => {
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 8080;
+app.use(express.static(path.join(__dirname, 'public')));
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
