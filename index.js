@@ -13,7 +13,6 @@ const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST'], allowedHeaders: ['Content-Type'] }));
 app.use(express.json());
 
-
 const FAL_SUBMIT = 'https://queue.fal.run/fal-ai/kling-video/v1.6/standard/text-to-video';
 const FAL_QUEUE = 'https://queue.fal.run/fal-ai/kling-video';
 
@@ -38,14 +37,12 @@ async function generateVoiceover(text, elevenKey, voiceId) {
   const buffer = Buffer.from(await res.arrayBuffer());
   const audioPath = `/tmp/audio_${Date.now()}.mp3`;
   fs.writeFileSync(audioPath, buffer);
-
   const duration = await new Promise((resolve, reject) => {
     ffmpeg.ffprobe(audioPath, (err, metadata) => {
       if (err) reject(err);
       else resolve(metadata.format.duration);
     });
   });
-
   return { audioPath, duration };
 }
 
@@ -65,7 +62,6 @@ async function generateKlingVideo(prompt, falApiKey, durationSeconds) {
   console.log('submit:', JSON.stringify(submitData));
   const request_id = submitData.request_id;
   if (!request_id) throw new Error('No request ID from fal.ai');
-
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 8000));
     const statusRes = await fetch(`${FAL_QUEUE}/requests/${request_id}/status`, {
@@ -90,11 +86,9 @@ async function generateKlingVideo(prompt, falApiKey, durationSeconds) {
 async function mergeAudioVideo(videoUrl, audioPath) {
   const videoPath = `/tmp/video_${Date.now()}.mp4`;
   const outputPath = `/tmp/output_${Date.now()}.mp4`;
-
   const videoRes = await fetch(videoUrl);
   const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
   fs.writeFileSync(videoPath, videoBuffer);
-
   await new Promise((resolve, reject) => {
     ffmpeg()
       .input(videoPath)
@@ -105,11 +99,12 @@ async function mergeAudioVideo(videoUrl, audioPath) {
       .on('error', reject)
       .run();
   });
-
   const outputBuffer = fs.readFileSync(outputPath);
   try { fs.unlinkSync(videoPath); fs.unlinkSync(audioPath); fs.unlinkSync(outputPath); } catch(e) {}
   return outputBuffer;
 }
+
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.post('/api/generate-video', async (req, res) => {
   const { prompt, question, falApiKey, elevenKey, voiceId } = req.body;
@@ -117,7 +112,6 @@ app.post('/api/generate-video', async (req, res) => {
   try {
     let audioPath = null;
     let duration = 5;
-
     if (elevenKey && voiceId && question) {
       console.log('Generating voiceover...');
       const voiceover = await generateVoiceover(question, elevenKey, voiceId);
@@ -125,10 +119,8 @@ app.post('/api/generate-video', async (req, res) => {
       duration = voiceover.duration;
       console.log(`Voiceover duration: ${duration}s`);
     }
-
     console.log(`Generating video at ${duration}s...`);
     const videoUrl = await generateKlingVideo(prompt, falApiKey, duration);
-
     if (audioPath) {
       console.log('Merging audio and video...');
       const mergedBuffer = await mergeAudioVideo(videoUrl, audioPath);
@@ -136,7 +128,6 @@ app.post('/api/generate-video', async (req, res) => {
       res.set('Content-Disposition', 'attachment; filename="video.mp4"');
       return res.send(mergedBuffer);
     }
-
     return res.json({ videoUrl });
   } catch(e) {
     console.log('error:', e.message);
@@ -144,8 +135,7 @@ app.post('/api/generate-video', async (req, res) => {
   }
 });
 
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 8080;
-app.use(express.static(path.join(__dirname, 'public')));
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
