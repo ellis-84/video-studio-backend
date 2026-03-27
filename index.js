@@ -2,7 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+const ffprobeStatic = require('ffprobe-static');
+
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+ffmpeg.setFfprobePath(ffprobeStatic.path);
 
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST'], allowedHeaders: ['Content-Type'] }));
@@ -26,13 +31,21 @@ async function generateVoiceover(text, elevenKey, voiceId) {
       voice_settings: { stability: 0.5, similarity_boost: 0.75 }
     })
   });
-  if (!res.ok) throw new Error(`ElevenLabs error: ${res.status}`);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`ElevenLabs error: ${res.status} - ${err}`);
+  }
   const buffer = Buffer.from(await res.arrayBuffer());
   const audioPath = `/tmp/audio_${Date.now()}.mp3`;
   fs.writeFileSync(audioPath, buffer);
-  const duration = parseFloat(
-    execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`).toString().trim()
-  );
+
+  const duration = await new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(audioPath, (err, metadata) => {
+      if (err) reject(err);
+      else resolve(metadata.format.duration);
+    });
+  });
+
   return { audioPath, duration };
 }
 
@@ -77,10 +90,22 @@ async function generateKlingVideo(prompt, falApiKey, durationSeconds) {
 async function mergeAudioVideo(videoUrl, audioPath) {
   const videoPath = `/tmp/video_${Date.now()}.mp4`;
   const outputPath = `/tmp/output_${Date.now()}.mp4`;
+
   const videoRes = await fetch(videoUrl);
   const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
   fs.writeFileSync(videoPath, videoBuffer);
-  execSync(`ffmpeg -i "${videoPath}" -i "${audioPath}" -map 0:v -map 1:a -c:v copy -c:a aac -shortest "${outputPath}" -y`);
+
+  await new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(videoPath)
+      .input(audioPath)
+      .outputOptions(['-map 0:v', '-map 1:a', '-c:v copy', '-c:a aac', '-shortest'])
+      .output(outputPath)
+      .on('end', resolve)
+      .on('error', reject)
+      .run();
+  });
+
   const outputBuffer = fs.readFileSync(outputPath);
   try { fs.unlinkSync(videoPath); fs.unlinkSync(audioPath); fs.unlinkSync(outputPath); } catch(e) {}
   return outputBuffer;
